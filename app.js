@@ -1,0 +1,169 @@
+const API_URL = "https://card-speed-match-online.umjunsick022.chatgpt.site/api/game";
+
+const state = {
+    token: localStorage.getItem("card-match-token") || "",
+    user: null,
+    mode: "login",
+    queued: false,
+    match: null,
+    showResult: false,
+    message: ""
+};
+
+const app = document.getElementById("app");
+
+async function api(action, extra = {}) {
+    const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            ...(state.token ? { Authorization: `Bearer ${state.token}` } : {})
+        },
+        body: JSON.stringify({ action, ...extra })
+    });
+    const text = await response.text();
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch {
+        throw new Error("서버 연결에 실패했습니다.");
+    }
+    if (!response.ok) throw new Error(data.message || "요청에 실패했습니다.");
+    return data;
+}
+
+function applyData(data) {
+    state.user = data.user;
+    state.queued = Boolean(data.queued);
+    if (data.match) {
+        state.match = data.match;
+        if (data.match.status === "finished" && data.match.result) state.showResult = true;
+    }
+    render();
+}
+
+function renderAuth() {
+    app.innerHTML = `
+        <section class="auth">
+            <div class="auth-inner">
+                <h1>카드 짝 맞추기</h1>
+                <p class="subtitle">친구보다 빨리 카드 8쌍을 맞춰보세요</p>
+                <div class="tabs">
+                    <button id="loginTab" class="${state.mode === "login" ? "" : "off"}">로그인</button>
+                    <button id="signupTab" class="${state.mode === "signup" ? "" : "off"}">회원가입</button>
+                </div>
+                <form id="authForm">
+                    <label>아이디<input name="username" minlength="3" maxlength="16" required></label>
+                    <label>비밀번호<input name="password" type="password" minlength="4" maxlength="64" required></label>
+                    <button type="submit">${state.mode === "login" ? "로그인" : "가입하기"}</button>
+                </form>
+                <p class="message">${state.message}</p>
+            </div>
+        </section>`;
+    document.getElementById("loginTab").onclick = () => { state.mode = "login"; state.message = ""; render(); };
+    document.getElementById("signupTab").onclick = () => { state.mode = "signup"; state.message = ""; render(); };
+    document.getElementById("authForm").onsubmit = async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        try {
+            const data = await api(state.mode, { username: form.get("username"), password: form.get("password") });
+            state.token = data.token;
+            state.user = data.user;
+            state.message = "";
+            localStorage.setItem("card-match-token", state.token);
+            render();
+        } catch (error) {
+            state.message = error.message;
+            render();
+        }
+    };
+}
+
+function renderLobby() {
+    app.innerHTML = `
+        <header class="top"><h1>카드 짝 맞추기</h1><button id="logout">로그아웃</button></header>
+        <section class="profile">
+            <h2>${state.user.username} 님</h2>
+            <div class="record"><span>승리 <b>${state.user.wins}</b></span><span>패배 <b>${state.user.losses}</b></span></div>
+        </section>
+        <section class="queue">
+            <div class="queue-icon ${state.queued ? "spin" : ""}">${state.queued ? "↻" : "?"}</div>
+            <h2>${state.queued ? "상대를 찾는 중..." : "대결 준비 완료"}</h2>
+            <p>${state.queued ? "다른 플레이어가 들어올 때까지 기다려 주세요." : "버튼을 누르면 자동으로 1대1 매칭됩니다."}</p>
+            <button id="queueButton">${state.queued ? "매칭 취소" : "큐 돌리기"}</button>
+        </section>
+        <p class="help">같은 주소에 접속한 다른 사람과 매칭됩니다.</p>`;
+    document.getElementById("logout").onclick = logout;
+    document.getElementById("queueButton").onclick = () => runAction(state.queued ? "cancelQueue" : "joinQueue");
+}
+
+function renderGame() {
+    const match = state.match;
+    const preview = Date.now() < match.startsAt;
+    const seconds = preview ? Math.max(1, Math.ceil((match.startsAt - Date.now()) / 1000)) : Math.max(0, Math.ceil((match.endsAt - Date.now()) / 1000));
+    app.innerHTML = `
+        <h1>카드 짝 맞추기</h1>
+        <section class="score">
+            <div><b>나: ${match.player.username}</b><strong>${match.player.score}점</strong><small>실수 ${match.player.wrong}</small></div>
+            <div class="vs">VS<br><span>${seconds}</span></div>
+            <div><b>상대: ${match.opponent.username}</b><strong>${match.opponent.score}점</strong><small>실수 ${match.opponent.wrong}</small></div>
+        </section>
+        <p class="notice">${preview ? "카드를 외우세요" : "먼저 8쌍 맞추면 승리"}</p>
+        <section class="board">
+            ${match.cards.map((emoji, index) => {
+                const matched = match.matched.includes(index);
+                const wrong = match.wrongIndices.includes(index);
+                return `<button class="card ${emoji ? "open" : ""} ${matched ? "matched" : ""} ${wrong ? "wrong" : ""}" data-index="${index}" ${preview || matched || emoji ? "disabled" : ""}>${emoji || "?"}</button>`;
+            }).join("")}
+        </section>
+        <button id="leave" class="leave">게임 나가기</button>`;
+    document.querySelectorAll(".card:not(:disabled)").forEach(card => {
+        card.onclick = () => runAction("flip", { matchId: match.id, index: Number(card.dataset.index) });
+    });
+    document.getElementById("leave").onclick = () => {
+        if (confirm("게임을 나가면 패배합니다. 나갈까요?")) runAction("leave", { matchId: match.id });
+    };
+}
+
+function renderResult() {
+    const match = state.match;
+    const result = match.result === "win" ? ["🎉", "승리"] : match.result === "lose" ? ["ㅠㅠ", "패배"] : ["🤝", "무승부"];
+    app.innerHTML = `<section class="result"><div class="result-icon">${result[0]}</div><h1>${result[1]}</h1><p>내 점수 ${match.player.score} : ${match.opponent.score} 상대 점수</p><button id="lobby">로비로 돌아가기</button></section>`;
+    document.getElementById("lobby").onclick = () => { state.match = null; state.showResult = false; render(); };
+}
+
+function render() {
+    if (!state.token || !state.user) return renderAuth();
+    if (state.showResult && state.match?.result) return renderResult();
+    if (state.match) return renderGame();
+    renderLobby();
+}
+
+async function runAction(action, extra = {}) {
+    try { applyData(await api(action, extra)); }
+    catch (error) { state.message = error.message; render(); }
+}
+
+async function logout() {
+    try { await api("logout"); } catch {}
+    localStorage.removeItem("card-match-token");
+    state.token = "";
+    state.user = null;
+    state.match = null;
+    render();
+}
+
+async function poll() {
+    if (!state.token) return;
+    try {
+        const data = await api("poll", state.match ? { matchId: state.match.id } : {});
+        applyData(data);
+    } catch (error) {
+        if (error.message.includes("로그인")) logout();
+    }
+}
+
+render();
+poll();
+setInterval(poll, 700);
+setInterval(() => { if (state.match && !state.showResult) render(); }, 250);
