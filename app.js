@@ -6,6 +6,8 @@ const state = {
     mode: "login",
     queued: false,
     match: null,
+    knownCards: [],
+    pendingFlips: [],
     showResult: false,
     message: ""
 };
@@ -36,6 +38,13 @@ function applyData(data) {
     state.user = data.user;
     state.queued = Boolean(data.queued);
     if (data.match) {
+        if (state.match?.id !== data.match.id) {
+            state.knownCards = [];
+            state.pendingFlips = [];
+        }
+        data.match.cards.forEach((emoji, index) => {
+            if (emoji) state.knownCards[index] = emoji;
+        });
         state.match = data.match;
         if (data.match.status === "finished" && data.match.result) state.showResult = true;
     }
@@ -113,16 +122,40 @@ function renderGame() {
             ${match.cards.map((emoji, index) => {
                 const matched = match.matched.includes(index);
                 const wrong = match.wrongIndices.includes(index);
-                return `<button class="card ${emoji ? "open" : ""} ${matched ? "matched" : ""} ${wrong ? "wrong" : ""}" data-index="${index}" ${preview || matched || emoji ? "disabled" : ""}>${emoji || "?"}</button>`;
+                const pending = state.pendingFlips.includes(index);
+                const shownEmoji = emoji || (pending ? state.knownCards[index] : null);
+                return `<button class="card ${shownEmoji ? "open" : ""} ${matched ? "matched" : ""} ${wrong ? "wrong" : ""}" data-index="${index}" ${preview || matched || shownEmoji ? "disabled" : ""}>${shownEmoji || "?"}</button>`;
             }).join("")}
         </section>
         <button id="leave" class="leave">게임 나가기</button>`;
     document.querySelectorAll(".card:not(:disabled)").forEach(card => {
-        card.onclick = () => runAction("flip", { matchId: match.id, index: Number(card.dataset.index) });
+        card.onclick = () => flipImmediately(Number(card.dataset.index));
     });
     document.getElementById("leave").onclick = () => {
         if (confirm("게임을 나가면 패배합니다. 나갈까요?")) runAction("leave", { matchId: match.id });
     };
+}
+
+let flipQueue = Promise.resolve();
+
+function flipImmediately(index) {
+    if (!state.match || state.pendingFlips.includes(index)) return;
+    const visibleCount = state.match.cards.filter(Boolean).length + state.pendingFlips.length;
+    if (visibleCount >= 2) return;
+
+    state.pendingFlips.push(index);
+    render();
+
+    const matchId = state.match.id;
+    flipQueue = flipQueue.then(async () => {
+        const data = await api("flip", { matchId, index });
+        state.pendingFlips = state.pendingFlips.filter(value => value !== index);
+        applyData(data);
+    }).catch(error => {
+        state.pendingFlips = state.pendingFlips.filter(value => value !== index);
+        state.message = error.message;
+        render();
+    });
 }
 
 function renderResult() {
@@ -154,7 +187,7 @@ async function logout() {
 }
 
 async function poll() {
-    if (!state.token) return;
+    if (!state.token || state.pendingFlips.length > 0) return;
     try {
         const data = await api("poll", state.match ? { matchId: state.match.id } : {});
         applyData(data);
@@ -165,5 +198,5 @@ async function poll() {
 
 render();
 poll();
-setInterval(poll, 700);
+setInterval(poll, 300);
 setInterval(() => { if (state.match && !state.showResult) render(); }, 250);
