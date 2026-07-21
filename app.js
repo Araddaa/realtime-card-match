@@ -13,6 +13,16 @@ const state = {
 };
 
 const app = document.getElementById("app");
+const chatWidget = document.getElementById("chatWidget");
+const chatState = {
+    open: false,
+    query: "",
+    results: [],
+    target: null,
+    messages: [],
+    draft: "",
+    error: ""
+};
 
 async function api(action, extra = {}) {
     const response = await fetch(API_URL, {
@@ -166,10 +176,156 @@ function renderResult() {
 }
 
 function render() {
-    if (!state.token || !state.user) return renderAuth();
-    if (state.showResult && state.match?.result) return renderResult();
-    if (state.match) return renderGame();
-    renderLobby();
+    if (!state.token || !state.user) renderAuth();
+    else if (state.showResult && state.match?.result) renderResult();
+    else if (state.match) renderGame();
+    else renderLobby();
+    syncChatVisibility();
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function syncChatVisibility() {
+    if (!state.token || !state.user) {
+        chatWidget.innerHTML = "";
+        chatWidget.classList.add("hidden");
+        return;
+    }
+    chatWidget.classList.remove("hidden");
+    if (!chatWidget.innerHTML) renderChat();
+}
+
+function renderChat() {
+    if (!state.token || !state.user) return syncChatVisibility();
+
+    if (!chatState.open) {
+        chatWidget.innerHTML = `<button id="openChat" class="chat-fab">채팅</button>`;
+        document.getElementById("openChat").onclick = () => {
+            chatState.open = true;
+            renderChat();
+        };
+        return;
+    }
+
+    if (!chatState.target) {
+        chatWidget.innerHTML = `
+            <section class="chat-panel">
+                <header class="chat-header"><b>아이디로 채팅</b><button id="closeChat" aria-label="채팅 닫기">×</button></header>
+                <form id="userSearch" class="chat-search">
+                    <input id="chatQuery" value="${escapeHtml(chatState.query)}" placeholder="상대 아이디 검색" maxlength="16" autocomplete="off">
+                    <button type="submit">검색</button>
+                </form>
+                <div class="chat-results">
+                    ${chatState.results.map(user => `<button class="chat-user" data-user-id="${user.id}">${escapeHtml(user.username)}</button>`).join("") || `<p>아이디를 검색해주세요.</p>`}
+                </div>
+                <p class="chat-error">${escapeHtml(chatState.error)}</p>
+            </section>`;
+        document.getElementById("closeChat").onclick = () => { chatState.open = false; renderChat(); };
+        document.getElementById("userSearch").onsubmit = searchChatUsers;
+        document.querySelectorAll(".chat-user").forEach(button => {
+            button.onclick = () => openConversation(Number(button.dataset.userId));
+        });
+        return;
+    }
+
+    chatWidget.innerHTML = `
+        <section class="chat-panel">
+            <header class="chat-header">
+                <button id="chatBack" aria-label="검색으로 돌아가기">←</button>
+                <b>${escapeHtml(chatState.target.username)}</b>
+                <button id="closeChat" aria-label="채팅 닫기">×</button>
+            </header>
+            <div id="chatMessages" class="chat-messages">
+                ${chatState.messages.map(message => `
+                    <div class="chat-message ${message.senderId === state.user.id ? "mine" : "theirs"}">
+                        <span>${escapeHtml(message.body)}</span>
+                    </div>`).join("") || `<p>첫 메시지를 보내보세요.</p>`}
+            </div>
+            <form id="messageForm" class="chat-compose">
+                <input id="messageInput" value="${escapeHtml(chatState.draft)}" placeholder="메시지 입력" maxlength="300" autocomplete="off">
+                <button type="submit">전송</button>
+            </form>
+            <p class="chat-error">${escapeHtml(chatState.error)}</p>
+        </section>`;
+    document.getElementById("closeChat").onclick = () => { chatState.open = false; renderChat(); };
+    document.getElementById("chatBack").onclick = () => {
+        chatState.target = null;
+        chatState.messages = [];
+        chatState.error = "";
+        renderChat();
+    };
+    document.getElementById("messageInput").oninput = event => { chatState.draft = event.target.value; };
+    document.getElementById("messageForm").onsubmit = sendChatMessage;
+    const messages = document.getElementById("chatMessages");
+    messages.scrollTop = messages.scrollHeight;
+}
+
+async function searchChatUsers(event) {
+    event.preventDefault();
+    chatState.query = document.getElementById("chatQuery").value.trim();
+    chatState.error = "";
+    try {
+        const data = await api("searchUsers", { query: chatState.query });
+        chatState.results = data.users;
+    } catch (error) {
+        chatState.error = error.message;
+    }
+    renderChat();
+}
+
+async function openConversation(targetId) {
+    chatState.error = "";
+    try {
+        const data = await api("getMessages", { targetId });
+        chatState.target = data.target;
+        chatState.messages = data.messages;
+        chatState.draft = "";
+    } catch (error) {
+        chatState.error = error.message;
+    }
+    renderChat();
+}
+
+async function sendChatMessage(event) {
+    event.preventDefault();
+    const message = chatState.draft.trim();
+    if (!message || !chatState.target) return;
+    chatState.draft = "";
+    chatState.error = "";
+    try {
+        const data = await api("sendMessage", { targetId: chatState.target.id, message });
+        chatState.messages = data.messages;
+    } catch (error) {
+        chatState.draft = message;
+        chatState.error = error.message;
+    }
+    renderChat();
+}
+
+let chatPolling = false;
+async function pollChat() {
+    if (chatPolling || !state.token || !chatState.open || !chatState.target) return;
+    chatPolling = true;
+    try {
+        const data = await api("getMessages", { targetId: chatState.target.id });
+        const oldLast = chatState.messages.at(-1)?.id;
+        const newLast = data.messages.at(-1)?.id;
+        if (oldLast !== newLast || chatState.messages.length !== data.messages.length) {
+            chatState.messages = data.messages;
+            renderChat();
+        }
+    } catch (error) {
+        chatState.error = error.message;
+    } finally {
+        chatPolling = false;
+    }
 }
 
 async function runAction(action, extra = {}) {
@@ -183,6 +339,10 @@ async function logout() {
     state.token = "";
     state.user = null;
     state.match = null;
+    chatState.open = false;
+    chatState.target = null;
+    chatState.messages = [];
+    chatState.results = [];
     render();
 }
 
@@ -200,3 +360,4 @@ render();
 poll();
 setInterval(poll, 300);
 setInterval(() => { if (state.match && !state.showResult) render(); }, 250);
+setInterval(pollChat, 1000);

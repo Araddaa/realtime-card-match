@@ -42,9 +42,30 @@ input { width: 100%; padding: 11px; border: 1px solid #888; }
 .result { min-height: calc(100vh - 48px); display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .result-icon { font-size: 55px; }
 .result h1 { margin: 10px 0; }
+.hidden { display: none !important; }
+#chatWidget { position: fixed; right: 22px; bottom: 22px; z-index: 20; text-align: left; }
+.chat-fab { width: 72px; height: 72px; padding: 0; border-radius: 50%; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+.chat-panel { width: 330px; height: 440px; display: flex; flex-direction: column; overflow: hidden; border: 2px solid #111; border-radius: 12px; background: white; box-shadow: 0 8px 25px rgba(0, 0, 0, .25); }
+.chat-header { min-height: 52px; display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; padding: 5px; color: white; text-align: center; background: #111; }
+.chat-header > b:first-child { grid-column: 1 / 3; text-align: left; padding-left: 12px; }
+.chat-header button { padding: 6px; border-radius: 6px; font-size: 22px; background: transparent; }
+.chat-search, .chat-compose { display: grid; grid-template-columns: 1fr auto; gap: 7px; padding: 10px; }
+.chat-search input, .chat-compose input { min-width: 0; padding: 9px; }
+.chat-search button, .chat-compose button { padding: 9px 13px; border-radius: 6px; }
+.chat-results { flex: 1; overflow-y: auto; padding: 0 10px; }
+.chat-results > p, .chat-messages > p { color: #777; text-align: center; }
+.chat-user { width: 100%; margin-bottom: 7px; padding: 11px; border-radius: 6px; text-align: left; background: #777; }
+.chat-messages { flex: 1; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; padding: 12px; background: #f1f1f1; }
+.chat-message { display: flex; }
+.chat-message.mine { justify-content: flex-end; }
+.chat-message span { max-width: 78%; padding: 8px 11px; border-radius: 12px; overflow-wrap: anywhere; background: white; }
+.chat-message.mine span { color: white; background: #111; }
+.chat-error { min-height: 18px; margin: 0 10px 7px; color: red; font-size: 12px; text-align: center; }
 @media (max-width: 520px) {
     .board { grid-template-columns: repeat(4, minmax(55px, 1fr)); gap: 8px; }
     .card { width: 100%; height: auto; aspect-ratio: .81; font-size: 28px; }
     h1, .top h1 { font-size: 28px; }
     .top button { padding: 10px 16px; }
+    #chatWidget { right: 10px; bottom: 10px; }
+    .chat-panel { width: calc(100vw - 20px); height: 65vh; }
 }
